@@ -1,0 +1,22 @@
+<!-- templates/add_doctor.html -->
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Add Doctor</title>
+</head>
+<body>
+    <h2>Add Doctor</h2>
+    <form action="/admin/add_doctor" method="POST">
+        <input type="text" name="name" placeholder="Name" required><br>
+        <input type="text" name="specialization" placeholder="Specialization" required><br>
+        <input type="number" name="experience" placeholder="Experience (years)" required><br>
+        <input type="text" name="contact" placeholder="Contact" required><br>
+        <input type="number" name="slots" placeholder="Available Slots" required><br>
+        <input type="text" name="username" placeholder="Login Username" required><br>
+        <input type="password" name="password" placeholder="Login Password" required><br>
+        <button type="submit">Add Doctor</button>
+    </form>
+    <br>
+    <a href="/admin/dashboard">Back to Dashboard</a>
+</body>
+</html>
