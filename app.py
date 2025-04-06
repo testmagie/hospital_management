@@ -13,7 +13,6 @@ DATABASE = 'hospital.db'
 def get_db():
     return sqlite3.connect(DATABASE)
 
-# Initialize DB on first run
 def initialize_db():
     if not os.path.exists(DATABASE):
         conn = get_db()
@@ -23,12 +22,6 @@ def initialize_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT UNIQUE NOT NULL,
             password TEXT NOT NULL)''')
-
-        cursor.execute('''CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT UNIQUE NOT NULL,
-            password TEXT NOT NULL,
-            role TEXT CHECK(role IN ('doctor', 'patient')) NOT NULL)''')
 
         cursor.execute('''CREATE TABLE IF NOT EXISTS doctors (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -44,6 +37,18 @@ def initialize_db():
             age INTEGER NOT NULL,
             gender TEXT NOT NULL,
             contact TEXT)''')
+
+        cursor.execute('''CREATE TABLE IF NOT EXISTS doctor_logins (
+            doctor_id INTEGER PRIMARY KEY,
+            username TEXT UNIQUE NOT NULL,
+            password TEXT NOT NULL,
+            FOREIGN KEY (doctor_id) REFERENCES doctors(id))''')
+
+        cursor.execute('''CREATE TABLE IF NOT EXISTS patient_logins (
+            patient_id INTEGER PRIMARY KEY,
+            username TEXT UNIQUE NOT NULL,
+            password TEXT NOT NULL,
+            FOREIGN KEY (patient_id) REFERENCES patients(id))''')
 
         cursor.execute('''CREATE TABLE IF NOT EXISTS medical_records (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -62,7 +67,6 @@ def initialize_db():
             FOREIGN KEY (patient_id) REFERENCES patients(id),
             FOREIGN KEY (doctor_id) REFERENCES doctors(id))''')
 
-        # Default admin
         default_admin = ('admin', generate_password_hash('admin123'))
         cursor.execute("INSERT INTO admin (username, password) VALUES (?, ?)", default_admin)
 
@@ -85,23 +89,27 @@ def login():
     if request.method == 'POST':
         username = request.form['username']
         password = request.form['password']
-
         conn = get_db()
         cursor = conn.cursor()
-        cursor.execute("SELECT id, username, password, role FROM users WHERE username = ?", (username,))
-        user = cursor.fetchone()
-        conn.close()
 
-        if user and check_password_hash(user[2], password):
-            session['user_id'] = user[0]
-            session['username'] = user[1]
-            session['role'] = user[3]
-            if user[3] == 'doctor':
-                return redirect('/doctor')
-            else:
-                return redirect('/user')
-        else:
-            flash("Invalid credentials")
+        cursor.execute("SELECT doctor_id, password FROM doctor_logins WHERE username = ?", (username,))
+        doc = cursor.fetchone()
+        if doc and check_password_hash(doc[1], password):
+            session['user_id'] = doc[0]
+            session['username'] = username
+            session['role'] = 'doctor'
+            return redirect('/doctor')
+
+        cursor.execute("SELECT patient_id, password FROM patient_logins WHERE username = ?", (username,))
+        pat = cursor.fetchone()
+        if pat and check_password_hash(pat[1], password):
+            session['user_id'] = pat[0]
+            session['username'] = username
+            session['role'] = 'patient'
+            return redirect('/user')
+
+        conn.close()
+        flash("Invalid credentials.")
     return render_template('login.html')
 
 @app.route('/logout')
@@ -120,22 +128,17 @@ def view_patient():
     patient_id = request.form['patient_id']
     conn = get_db()
     cursor = conn.cursor()
-    
-    # Try to fetch patient by ID or Name
     cursor.execute("SELECT * FROM patients WHERE id = ? OR name = ?", (patient_id, patient_id))
     patient = cursor.fetchone()
-    
     if not patient:
         conn.close()
         flash("Patient not found.")
         return redirect('/doctor')
-    
-    # If found, continue
     cursor.execute("SELECT id, description, upload_date FROM medical_records WHERE patient_id = ?", (patient[0],))
     records = cursor.fetchall()
     conn.close()
-    
     return render_template('view_medical_history.html', patient=patient, records=records)
+
 @app.route('/doctor/appointments')
 def view_appointments():
     if 'role' in session and session['role'] == 'doctor':
@@ -205,7 +208,6 @@ def admin_dashboard():
         return render_template('admin_dashboard.html')
     return redirect('/admin')
 
-from werkzeug.security import generate_password_hash
 @app.route('/admin/add_doctor_form')
 def add_doctor_form():
     if 'admin' in session:
@@ -232,8 +234,8 @@ def add_doctor():
                 doctor_id = cursor.lastrowid
                 password_hash = generate_password_hash(data['password'])
                 cursor.execute("""
-                    INSERT INTO users (id, username, password, role)
-                    VALUES (?, ?, ?, 'doctor')
+                    INSERT INTO doctor_logins (doctor_id, username, password)
+                    VALUES (?, ?, ?)
                 """, (doctor_id, data['username'], password_hash))
                 flash("Doctor added successfully")
         except sqlite3.IntegrityError:
@@ -255,8 +257,8 @@ def add_patient():
                 patient_id = cursor.lastrowid
                 password_hash = generate_password_hash(data['password'])
                 cursor.execute("""
-                    INSERT INTO users (id, username, password, role)
-                    VALUES (?, ?, ?, 'patient')
+                    INSERT INTO patient_logins (patient_id, username, password)
+                    VALUES (?, ?, ?)
                 """, (patient_id, data['username'], password_hash))
                 flash("Patient added successfully")
         except sqlite3.IntegrityError:
@@ -269,7 +271,10 @@ def view_doctors():
     if 'admin' in session:
         conn = get_db()
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM doctors")
+        cursor.execute("""
+            SELECT d.*, l.username FROM doctors d
+            JOIN doctor_logins l ON d.id = l.doctor_id
+        """)
         doctors = cursor.fetchall()
         conn.close()
         return render_template('view_doctors.html', doctors=doctors)
@@ -280,7 +285,10 @@ def view_patients():
     if 'admin' in session:
         conn = get_db()
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM patients")
+        cursor.execute("""
+            SELECT p.*, l.username FROM patients p
+            JOIN patient_logins l ON p.id = l.patient_id
+        """)
         patients = cursor.fetchall()
         conn.close()
         return render_template('view_patients.html', patients=patients)
@@ -299,4 +307,4 @@ def change_admin_password():
     return redirect('/admin/dashboard')
 
 if __name__ == '__main__':
-    app.run(debug=True,threaded=False)
+    app.run(debug=True, threaded=False)
